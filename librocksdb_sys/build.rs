@@ -152,6 +152,14 @@ fn build_rocksdb() -> Build {
             zlib_path
         }
     });
+    // Propagate the Cargo profile.debug==false setting to the RocksDB build.
+    // RocksDB debug information can be significiant in size (e.g on macOS librocksdb.a is ~800MiB
+    // with default default debuginfo (`-g`), or ~200MiB with debuginfo disabled), but cmake-rs
+    // doesn't communicate the Cargo setting by default so we do it explicitly here.
+    if env::var("DEBUG").unwrap_or("false".to_owned()) == "false" {
+        cfg.define("CMAKE_CXX_FLAGS_DEBUG", "-g0");
+    }
+
     let dst = cfg
         .define("WITH_GFLAGS", "OFF")
         .register_dep("Z")
