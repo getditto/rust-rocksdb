@@ -125,9 +125,39 @@ fn link_cpp(build: &mut Build) {
     build.cpp_link_stdlib(None);
 }
 
+/// Fix cacheline_aligned_alloc to throw std::bad_alloc on posix_memalign failure.
+///
+/// The upstream tikv/rocksdb (8.10.tikv branch) silently returns nullptr when
+/// posix_memalign fails. StatisticsData::operator new[] always routes through
+/// this function, so a failed allocation leaves CoreLocalArray::data_ null.
+/// Any subsequent access to per-core statistics then dereferences null + offset
+/// and crashes with SIGSEGV. (See DB-1237.)
+///
+/// Patching the source before cmake builds it is the least-invasive fix that
+/// doesn't require forking tikv/rocksdb.
+fn patch_cacheline_alloc(rocksdb_dir: &Path) {
+    let port_posix = rocksdb_dir.join("port").join("port_posix.cc");
+    let content = std::fs::read_to_string(&port_posix)
+        .expect("failed to read port/port_posix.cc");
+
+    // The buggy code that returns null instead of throwing.
+    let old = "  errno = posix_memalign(&m, CACHE_LINE_SIZE, size);\n  return errno ? nullptr : m;";
+    // Replacement: propagate the error via std::bad_alloc as the standard requires.
+    let new_code = "  if (int err = posix_memalign(&m, CACHE_LINE_SIZE, size)) {\n    errno = err;\n    throw std::bad_alloc();\n  }\n  return m;";
+
+    if content.contains(old) {
+        let patched = content.replace(old, new_code);
+        std::fs::write(&port_posix, patched)
+            .expect("failed to write patched port/port_posix.cc");
+        println!("cargo:warning=DB-1237: patched cacheline_aligned_alloc in port_posix.cc to throw std::bad_alloc on failure");
+    }
+}
+
 fn build_rocksdb() -> Build {
     let target = env::var("TARGET").expect("TARGET was not set");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let cur_dir = env::current_dir().unwrap();
+    patch_cacheline_alloc(&cur_dir.join("rocksdb"));
     let mut cfg = Config::new("rocksdb");
     if cfg!(feature = "encryption") {
         cfg.register_dep("OPENSSL").define("WITH_OPENSSL", "ON");
@@ -198,7 +228,6 @@ fn build_rocksdb() -> Build {
 
     config_binding_path();
 
-    let cur_dir = env::current_dir().unwrap();
     build.include(cur_dir.join("rocksdb").join("include"));
     build.include(cur_dir.join("rocksdb"));
     build.include(cur_dir.join("libtitan_sys").join("titan").join("include"));
