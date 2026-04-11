@@ -188,13 +188,36 @@ fn patch_cacheline_alloc(rocksdb_dir: &Path, out_dir: &Path) {
         );
     }
 
-    // --- 2. Delete any cached port_posix.cc.o so cmake must recompile ---
-    // ditto-action-prepare may restore a cargo/cmake build cache. If so, cmake
-    // will skip recompiling port_posix.cc because its cached .o is timestamped
-    // after our freshly-patched source. Removing the cached object forces cmake
-    // to recompile with the patched source regardless.
+    // --- 2. Invalidate the cmake build cache so cmake must recompile ---
+    //
+    // ditto-action-prepare restores a build cache that typically includes both
+    // librocksdb.a and the cmake internal state files (CMakeFiles/). cmake uses
+    // those state files to decide nothing needs rebuilding — it never re-checks
+    // source file timestamps against the archive. Simply patching port_posix.cc
+    // is therefore not enough; cmake skips recompilation entirely.
+    //
+    // Fix: delete librocksdb.a AND port_posix.cc.o from the cmake build dir.
+    //   • Deleting librocksdb.a tells cmake the archive must be rebuilt.
+    //   • Deleting port_posix.cc.o tells cmake that object must be recompiled.
+    // If the cache also has other .o files for the ~400 remaining RocksDB
+    // sources, cmake can re-archive quickly from those existing objects plus the
+    // freshly-compiled patched port_posix.cc.o. If the cache only has
+    // librocksdb.a (no .o files), cmake falls back to a full rebuild — slower
+    // but correct.
     let cmake_build = out_dir.join("build");
     if cmake_build.is_dir() {
+        // Delete librocksdb.a to force cmake to re-archive.
+        for candidate in [
+            cmake_build.join("librocksdb.a"),
+            cmake_build.join("lib").join("librocksdb.a"),
+        ] {
+            if candidate.exists() {
+                if std::fs::remove_file(&candidate).is_ok() {
+                    println!("cargo:warning=DB-1237: removed {candidate:?} to force cmake re-archive");
+                }
+            }
+        }
+        // Delete port_posix.cc.o so cmake recompiles it from the patched source.
         delete_matching(&cmake_build, "port_posix.cc.o");
     }
 }
