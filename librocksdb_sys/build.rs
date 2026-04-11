@@ -125,7 +125,7 @@ fn link_cpp(build: &mut Build) {
     build.cpp_link_stdlib(None);
 }
 
-/// Fix cacheline_aligned_alloc to throw std::bad_alloc on posix_memalign failure.
+/// Fix cacheline_aligned_alloc to never return nullptr (DB-1237).
 ///
 /// The upstream tikv/rocksdb (8.10.tikv branch) silently returns nullptr when
 /// posix_memalign fails. StatisticsData::operator new[] always routes through
@@ -133,23 +133,86 @@ fn link_cpp(build: &mut Build) {
 /// Any subsequent access to per-core statistics then dereferences null + offset
 /// and crashes with SIGSEGV. (See DB-1237.)
 ///
-/// Patching the source before cmake builds it is the least-invasive fix that
-/// doesn't require forking tikv/rocksdb.
-fn patch_cacheline_alloc(rocksdb_dir: &Path) {
+/// Fix: fall back to malloc when posix_memalign fails. Cache-line alignment is
+/// a performance optimization, not a correctness requirement. If malloc also
+/// fails we abort() with a clear message rather than returning nullptr silently.
+///
+/// We also forcibly delete any cached port_posix.cc.o from the cmake build dir
+/// so that cmake must recompile the patched source even when build caches from
+/// ditto-action-prepare are present.
+fn patch_cacheline_alloc(rocksdb_dir: &Path, out_dir: &Path) {
+    // --- 1. Patch the source ---
     let port_posix = rocksdb_dir.join("port").join("port_posix.cc");
     let content = std::fs::read_to_string(&port_posix)
         .expect("failed to read port/port_posix.cc");
 
-    // The buggy code that returns null instead of throwing.
+    // The buggy two-liner: posix_memalign returns an error code; the code stores
+    // it in errno and then returns nullptr if errno is non-zero.
     let old = "  errno = posix_memalign(&m, CACHE_LINE_SIZE, size);\n  return errno ? nullptr : m;";
-    // Replacement: propagate the error via std::bad_alloc as the standard requires.
-    let new_code = "  if (int err = posix_memalign(&m, CACHE_LINE_SIZE, size)) {\n    errno = err;\n    throw std::bad_alloc();\n  }\n  return m;";
+
+    // Replacement: fall back to malloc on posix_memalign failure so we never
+    // return nullptr.  Throwing std::bad_alloc is avoided here because this
+    // function is called through operator new[] which is reachable from the
+    // crocksdb C API; C++ exceptions propagating through extern "C" and then
+    // into Rust cause undefined behaviour.
+    let new_code = concat!(
+        "  if (posix_memalign(&m, CACHE_LINE_SIZE, size) != 0) {\n",
+        "    // posix_memalign failed; fall back to plain malloc.\n",
+        "    // Cache-line alignment is a performance hint, not a correctness\n",
+        "    // requirement.  If malloc also fails we abort with a clear message\n",
+        "    // rather than silently returning nullptr (DB-1237).\n",
+        "    m = malloc(size);\n",
+        "    if (m == nullptr) {\n",
+        "      fprintf(stderr,\n",
+        "              \"cacheline_aligned_alloc: OOM for %zu bytes\\n\", size);\n",
+        "      abort();\n",
+        "    }\n",
+        "  }\n",
+        "  return m;",
+    );
 
     if content.contains(old) {
         let patched = content.replace(old, new_code);
-        std::fs::write(&port_posix, patched)
+        std::fs::write(&port_posix, &patched)
             .expect("failed to write patched port/port_posix.cc");
-        println!("cargo:warning=DB-1237: patched cacheline_aligned_alloc in port_posix.cc to throw std::bad_alloc on failure");
+        println!(
+            "cargo:warning=DB-1237: patched port_posix.cc: \
+             cacheline_aligned_alloc now falls back to malloc on posix_memalign failure"
+        );
+    } else if !content.contains("fall back to plain malloc") {
+        // Neither the original nor our patch is present — unexpected file version.
+        println!(
+            "cargo:warning=DB-1237: WARNING: could not locate patch target in \
+             port/port_posix.cc (len={}); patch not applied",
+            content.len()
+        );
+    }
+
+    // --- 2. Delete any cached port_posix.cc.o so cmake must recompile ---
+    // ditto-action-prepare may restore a cargo/cmake build cache. If so, cmake
+    // will skip recompiling port_posix.cc because its cached .o is timestamped
+    // after our freshly-patched source. Removing the cached object forces cmake
+    // to recompile with the patched source regardless.
+    let cmake_build = out_dir.join("build");
+    if cmake_build.is_dir() {
+        delete_matching(&cmake_build, "port_posix.cc.o");
+    }
+}
+
+/// Recursively delete all files named `target_name` under `dir`.
+fn delete_matching(dir: &Path, target_name: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            delete_matching(&path, target_name);
+        } else if path.file_name().map(|n| n == target_name).unwrap_or(false) {
+            if std::fs::remove_file(&path).is_ok() {
+                println!("cargo:warning=DB-1237: removed cached {path:?}");
+            }
+        }
     }
 }
 
@@ -157,7 +220,8 @@ fn build_rocksdb() -> Build {
     let target = env::var("TARGET").expect("TARGET was not set");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let cur_dir = env::current_dir().unwrap();
-    patch_cacheline_alloc(&cur_dir.join("rocksdb"));
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    patch_cacheline_alloc(&cur_dir.join("rocksdb"), &out_dir);
     let mut cfg = Config::new("rocksdb");
     if cfg!(feature = "encryption") {
         cfg.register_dep("OPENSSL").define("WITH_OPENSSL", "ON");
