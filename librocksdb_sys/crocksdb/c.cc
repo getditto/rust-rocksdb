@@ -52,13 +52,16 @@ void* cacheline_aligned_alloc(size_t size) {
 #  endif
     void* m = nullptr;
     int err = posix_memalign(&m, kCacheLineAlignment, size);
+    fprintf(stderr,
+            "DB-1237: cacheline_aligned_alloc(%zu): posix_memalign err=%d m=%p\n",
+            size, err, m);
     if (err != 0 || m == nullptr) {
         // posix_memalign failed; fall back to plain malloc.
         m = malloc(size);
+        fprintf(stderr, "DB-1237: fallback malloc(%zu) = %p\n", size, m);
         if (m == nullptr) {
             fprintf(stderr,
-                    "DB-1237: cacheline_aligned_alloc: OOM for %zu bytes "
-                    "(posix_memalign err=%d)\n",
+                    "DB-1237: OOM for %zu bytes (posix_memalign err=%d)\n",
                     size, err);
             abort();
         }
