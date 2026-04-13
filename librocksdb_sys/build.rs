@@ -79,21 +79,27 @@ fn main() {
         build.flag("-std=c++17");
         build.flag("-fno-rtti");
     }
+
+    // DB-1237: Match the NDEBUG state of librocksdb.a.  cmake compiles
+    // librocksdb.a in Release mode which defines NDEBUG, causing
+    // sizeof(port::Mutex) = 40 (no bool locked_ field).  The cc crate does NOT
+    // define NDEBUG by default, giving sizeof(port::Mutex) = 48 in c.cc.o.
+    // This 8-byte difference shifts CoreLocalArray::data_ from offset 96
+    // (what recordTick in librocksdb.a expects) to offset 104 (actual runtime
+    // location), so recordTick reads the last 8 bytes of an unlocked mutex (=0)
+    // as the data pointer and crashes with SIGSEGV at address 0x268.
+    if env::var("DEBUG").unwrap_or("true".to_owned()) == "false" {
+        build.define("NDEBUG", None);
+        println!("cargo:warning=DB-1237: defined NDEBUG in c.cc.o to match librocksdb.a ABI");
+    }
+
     link_cpp(&mut build);
 
-    // DB-1237: On Linux, override cacheline_aligned_alloc so it never returns
-    // nullptr.  The upstream tikv/rocksdb implementation (port/port_posix.cc)
-    // silently returns nullptr when posix_memalign fails, leaving
-    // CoreLocalArray::data_ null and causing SIGSEGV in recordTick.
-    //
-    // Strategy: embed a strong definition of cacheline_aligned_alloc directly
-    // in c.cc (which is always linked because Rust calls crocksdb_* functions).
-    // build.rs weakens the same symbol in librocksdb.a via objcopy so the
-    // linker accepts both without a "multiple definition" error; the strong
-    // version in c.cc.o takes precedence.
-    //
-    // NOTE: cacheline_alloc_override.cc is kept for reference but no longer
-    // compiled separately — the code lives in c.cc for reliable inclusion.
+    // DB-1237: On Linux, also override cacheline_aligned_alloc to ensure it
+    // never returns nullptr (the upstream port_posix.cc silently returns null
+    // on posix_memalign failure).  The strong definition lives in c.cc so it
+    // is always linked; build.rs weakens the same symbol in librocksdb.a via
+    // objcopy so the linker accepts both definitions.
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
         println!("cargo:warning=DB-1237: applying cacheline_aligned_alloc override (c.cc path)");
         weaken_cacheline_alloc_in_librocksdb();

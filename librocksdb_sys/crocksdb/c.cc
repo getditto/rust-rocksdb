@@ -10,40 +10,22 @@
 #include "crocksdb/c.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <cerrno>
 
 #include <limits>
 
-// DB-1237: Override cacheline_aligned_alloc so it never returns nullptr.
+// DB-1237: Override cacheline_aligned_alloc on Linux so it never returns
+// nullptr.  The upstream port_posix.cc silently returns nullptr on
+// posix_memalign failure, leaving CoreLocalArray::data_ null and causing a
+// SIGSEGV in recordTick.  Cache-line alignment is a performance hint, not a
+// correctness requirement, so malloc is a safe fallback.
 //
-// The upstream tikv/rocksdb port/port_posix.cc calls posix_memalign and
-// silently returns nullptr on failure, leaving CoreLocalArray::data_ null and
-// causing a SIGSEGV in recordTick on Linux CI (jemalloc + prof:true causes
-// posix_memalign to fail under certain conditions).
-//
-// This definition is placed in c.cc (which is always linked because Rust code
-// calls crocksdb_* functions) so it is ALWAYS included in the final binary as
-// a STRONG symbol.  build.rs weakens the corresponding symbol in librocksdb.a
-// via objcopy so the linker accepts both definitions without error; the strong
-// version here takes precedence.
-//
-// Cache-line alignment is a performance hint, not a correctness requirement,
-// so malloc is a safe fallback.
+// This strong definition lives in c.cc (always linked) so it always takes
+// precedence; build.rs weakens the corresponding symbol in librocksdb.a via
+// objcopy to avoid a "multiple definition" linker error.
 #if defined(__linux__)
-#pragma message("DB-1237: cacheline_aligned_alloc override is being compiled (linux)")
-// Do NOT define CACHE_LINE_SIZE here as a macro — port_posix.h defines both
-// CACHE_LINE_SIZE and ALIGN_AS in one #ifndef block, and defining only
-// CACHE_LINE_SIZE skips the ALIGN_AS definition, breaking statistics_impl.h.
-// Use a local constant instead.
 namespace rocksdb {
 namespace port {
-
-// Called once at program startup to confirm the override is linked in.
-static void __attribute__((constructor)) db1237_override_active() {
-    fprintf(stderr, "DB-1237: cacheline_aligned_alloc override is ACTIVE\n");
-}
-
 void* cacheline_aligned_alloc(size_t size) {
 #  if defined(__aarch64__) || defined(__powerpc__)
     static const size_t kCacheLineAlignment = 128;
@@ -51,18 +33,9 @@ void* cacheline_aligned_alloc(size_t size) {
     static const size_t kCacheLineAlignment = 64;
 #  endif
     void* m = nullptr;
-    int err = posix_memalign(&m, kCacheLineAlignment, size);
-    fprintf(stderr,
-            "DB-1237: cacheline_aligned_alloc(%zu): posix_memalign err=%d m=%p\n",
-            size, err, m);
-    if (err != 0 || m == nullptr) {
-        // posix_memalign failed; fall back to plain malloc.
+    if (posix_memalign(&m, kCacheLineAlignment, size) != 0 || m == nullptr) {
         m = malloc(size);
-        fprintf(stderr, "DB-1237: fallback malloc(%zu) = %p\n", size, m);
         if (m == nullptr) {
-            fprintf(stderr,
-                    "DB-1237: OOM for %zu bytes (posix_memalign err=%d)\n",
-                    size, err);
             abort();
         }
     }
