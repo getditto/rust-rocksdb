@@ -31,18 +31,20 @@
 // Cache-line alignment is a performance hint, not a correctness requirement,
 // so malloc is a safe fallback.
 #if defined(__linux__)
-#  ifndef CACHE_LINE_SIZE
-#    if defined(__aarch64__) || defined(__powerpc__)
-#      define CACHE_LINE_SIZE 128U
-#    else
-#      define CACHE_LINE_SIZE 64U
-#    endif
-#  endif
+// Do NOT define CACHE_LINE_SIZE here as a macro — port_posix.h defines both
+// CACHE_LINE_SIZE and ALIGN_AS in one #ifndef block, and defining only
+// CACHE_LINE_SIZE skips the ALIGN_AS definition, breaking statistics_impl.h.
+// Use a local constant instead.
 namespace rocksdb {
 namespace port {
 void* cacheline_aligned_alloc(size_t size) {
+#  if defined(__aarch64__) || defined(__powerpc__)
+    static const size_t kCacheLineAlignment = 128;
+#  else
+    static const size_t kCacheLineAlignment = 64;
+#  endif
     void* m = nullptr;
-    int err = posix_memalign(&m, CACHE_LINE_SIZE, size);
+    int err = posix_memalign(&m, kCacheLineAlignment, size);
     if (err != 0 || m == nullptr) {
         // posix_memalign failed; fall back to plain malloc.
         m = malloc(size);
