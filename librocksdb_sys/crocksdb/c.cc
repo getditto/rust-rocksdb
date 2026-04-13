@@ -30,7 +30,7 @@
 //
 // Cache-line alignment is a performance hint, not a correctness requirement,
 // so malloc is a safe fallback.
-#if defined(OS_LINUX)
+#if defined(__linux__)
 #  ifndef CACHE_LINE_SIZE
 #    if defined(__aarch64__) || defined(__powerpc__)
 #      define CACHE_LINE_SIZE 128U
@@ -58,7 +58,7 @@ void* cacheline_aligned_alloc(size_t size) {
 }
 } // namespace port
 } // namespace rocksdb
-#endif // OS_LINUX
+#endif // __linux__
 
 #include "db/column_family.h"
 #include "file/random_access_file_reader.h"
