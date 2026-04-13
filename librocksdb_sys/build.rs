@@ -80,7 +80,117 @@ fn main() {
         build.flag("-fno-rtti");
     }
     link_cpp(&mut build);
+
+    // DB-1237: On Linux, override cacheline_aligned_alloc so it never returns
+    // nullptr.  The upstream tikv/rocksdb implementation (port/port_posix.cc)
+    // silently returns nullptr when posix_memalign fails, leaving
+    // CoreLocalArray::data_ null and causing SIGSEGV in recordTick.
+    //
+    // Strategy: provide a strong definition in libcrocksdb.a (immune to cmake
+    // build-cache issues) and weaken the symbol in librocksdb.a via objcopy so
+    // the linker always picks our version.
+    if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
+        build.cpp(true).file("crocksdb/cacheline_alloc_override.cc");
+        weaken_cacheline_alloc_in_librocksdb();
+    }
+
     build.warnings(false).compile("libcrocksdb.a");
+}
+
+/// Weaken `_ZN7rocksdb4port23cacheline_aligned_allocEm` in `librocksdb.a`
+/// so the strong definition in `libcrocksdb.a` takes precedence at link time.
+///
+/// Without weakening, the linker emits "multiple definition" once it pulls
+/// `port_posix.cc.o` from `librocksdb.a` (for other symbols it provides)
+/// and finds our override in `libcrocksdb.a` already provides the same name.
+/// After weakening, `libcrocksdb.a`'s strong definition wins silently.
+///
+/// Approach: extract `port_posix.cc.o`, weaken the symbol with objcopy,
+/// update the archive.  This is safer than running objcopy directly on the
+/// archive (some objcopy versions don't support archives).
+fn weaken_cacheline_alloc_in_librocksdb() {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let librocksdb = out_dir.join("build").join("librocksdb.a");
+    if !librocksdb.exists() {
+        println!(
+            "cargo:warning=DB-1237: librocksdb.a not found at {:?}; \
+             skipping objcopy weakening",
+            librocksdb
+        );
+        return;
+    }
+
+    let symbol = "_ZN7rocksdb4port23cacheline_aligned_allocEm";
+
+    // Work in a temporary directory so we don't pollute OUT_DIR.
+    let tmpdir = out_dir.join("db1237_weaken_tmp");
+    let _ = std::fs::remove_dir_all(&tmpdir);
+    std::fs::create_dir_all(&tmpdir).expect("failed to create tmpdir");
+
+    // 1. Extract port_posix.cc.o from the archive.
+    let extract_ok = std::process::Command::new("ar")
+        .args(["x", librocksdb.to_str().unwrap(), "port_posix.cc.o"])
+        .current_dir(&tmpdir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !extract_ok {
+        println!(
+            "cargo:warning=DB-1237: ar x failed; trying direct objcopy on archive"
+        );
+        // Fallback: try objcopy directly on the archive.
+        let _ = std::process::Command::new("objcopy")
+            .arg("--weaken-symbol")
+            .arg(symbol)
+            .arg(&librocksdb)
+            .status();
+        return;
+    }
+
+    let obj = tmpdir.join("port_posix.cc.o");
+    if !obj.exists() {
+        println!(
+            "cargo:warning=DB-1237: port_posix.cc.o not found in archive; \
+             skipping weakening"
+        );
+        return;
+    }
+
+    // 2. Weaken the symbol in the extracted object.
+    let weaken_ok = std::process::Command::new("objcopy")
+        .arg("--weaken-symbol")
+        .arg(symbol)
+        .arg(&obj)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !weaken_ok {
+        println!(
+            "cargo:warning=DB-1237: objcopy --weaken-symbol failed; \
+             cacheline_alloc override may not take effect"
+        );
+        return;
+    }
+
+    // 3. Update the archive with the weakened object.
+    let update_ok = std::process::Command::new("ar")
+        .args(["r", librocksdb.to_str().unwrap(), obj.to_str().unwrap()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if update_ok {
+        println!(
+            "cargo:warning=DB-1237: weakened {symbol} in librocksdb.a"
+        );
+    } else {
+        println!(
+            "cargo:warning=DB-1237: ar r failed; cacheline_alloc override \
+             may not take effect"
+        );
+    }
+
+    // Clean up.
+    let _ = std::fs::remove_dir_all(&tmpdir);
 }
 
 fn link_cpp(build: &mut Build) {
