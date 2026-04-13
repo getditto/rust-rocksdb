@@ -10,8 +10,55 @@
 #include "crocksdb/c.h"
 
 #include <stdlib.h>
+#include <stdio.h>
+#include <cerrno>
 
 #include <limits>
+
+// DB-1237: Override cacheline_aligned_alloc so it never returns nullptr.
+//
+// The upstream tikv/rocksdb port/port_posix.cc calls posix_memalign and
+// silently returns nullptr on failure, leaving CoreLocalArray::data_ null and
+// causing a SIGSEGV in recordTick on Linux CI (jemalloc + prof:true causes
+// posix_memalign to fail under certain conditions).
+//
+// This definition is placed in c.cc (which is always linked because Rust code
+// calls crocksdb_* functions) so it is ALWAYS included in the final binary as
+// a STRONG symbol.  build.rs weakens the corresponding symbol in librocksdb.a
+// via objcopy so the linker accepts both definitions without error; the strong
+// version here takes precedence.
+//
+// Cache-line alignment is a performance hint, not a correctness requirement,
+// so malloc is a safe fallback.
+#if defined(OS_LINUX)
+#  ifndef CACHE_LINE_SIZE
+#    if defined(__aarch64__) || defined(__powerpc__)
+#      define CACHE_LINE_SIZE 128U
+#    else
+#      define CACHE_LINE_SIZE 64U
+#    endif
+#  endif
+namespace rocksdb {
+namespace port {
+void* cacheline_aligned_alloc(size_t size) {
+    void* m = nullptr;
+    int err = posix_memalign(&m, CACHE_LINE_SIZE, size);
+    if (err != 0 || m == nullptr) {
+        // posix_memalign failed; fall back to plain malloc.
+        m = malloc(size);
+        if (m == nullptr) {
+            fprintf(stderr,
+                    "DB-1237: cacheline_aligned_alloc: OOM for %zu bytes "
+                    "(posix_memalign err=%d)\n",
+                    size, err);
+            abort();
+        }
+    }
+    return m;
+}
+} // namespace port
+} // namespace rocksdb
+#endif // OS_LINUX
 
 #include "db/column_family.h"
 #include "file/random_access_file_reader.h"

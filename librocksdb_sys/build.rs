@@ -86,11 +86,16 @@ fn main() {
     // silently returns nullptr when posix_memalign fails, leaving
     // CoreLocalArray::data_ null and causing SIGSEGV in recordTick.
     //
-    // Strategy: provide a strong definition in libcrocksdb.a (immune to cmake
-    // build-cache issues) and weaken the symbol in librocksdb.a via objcopy so
-    // the linker always picks our version.
+    // Strategy: embed a strong definition of cacheline_aligned_alloc directly
+    // in c.cc (which is always linked because Rust calls crocksdb_* functions).
+    // build.rs weakens the same symbol in librocksdb.a via objcopy so the
+    // linker accepts both without a "multiple definition" error; the strong
+    // version in c.cc.o takes precedence.
+    //
+    // NOTE: cacheline_alloc_override.cc is kept for reference but no longer
+    // compiled separately — the code lives in c.cc for reliable inclusion.
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
-        build.cpp(true).file("crocksdb/cacheline_alloc_override.cc");
+        println!("cargo:warning=DB-1237: applying cacheline_aligned_alloc override (c.cc path)");
         weaken_cacheline_alloc_in_librocksdb();
     }
 
@@ -111,6 +116,12 @@ fn main() {
 fn weaken_cacheline_alloc_in_librocksdb() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let librocksdb = out_dir.join("build").join("librocksdb.a");
+    println!(
+        "cargo:warning=DB-1237: weaken_cacheline_alloc_in_librocksdb: \
+         looking for librocksdb.a at {:?} (exists={})",
+        librocksdb,
+        librocksdb.exists()
+    );
     if !librocksdb.exists() {
         println!(
             "cargo:warning=DB-1237: librocksdb.a not found at {:?}; \
