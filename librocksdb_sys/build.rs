@@ -146,6 +146,15 @@ fn patch_cacheline_alloc(rocksdb_dir: &Path, out_dir: &Path) {
     let content = std::fs::read_to_string(&port_posix)
         .expect("failed to read port/port_posix.cc");
 
+    // Diagnostic: always print path and patch state so CI logs are unambiguous.
+    let already_patched = content.contains("fall back to plain malloc");
+    println!(
+        "cargo:warning=DB-1237: port_posix={:?} len={} already_patched={}",
+        port_posix,
+        content.len(),
+        already_patched,
+    );
+
     // The buggy two-liner: posix_memalign returns an error code; the code stores
     // it in errno and then returns nullptr if errno is non-zero.
     let old = "  errno = posix_memalign(&m, CACHE_LINE_SIZE, size);\n  return errno ? nullptr : m;";
@@ -171,22 +180,38 @@ fn patch_cacheline_alloc(rocksdb_dir: &Path, out_dir: &Path) {
         "  return m;",
     );
 
-    if content.contains(old) {
-        let patched = content.replace(old, new_code);
-        std::fs::write(&port_posix, &patched)
-            .expect("failed to write patched port/port_posix.cc");
+    let patched_content = if content.contains(old) {
+        // Normal path: apply the patch.
         println!(
-            "cargo:warning=DB-1237: patched port_posix.cc: \
-             cacheline_aligned_alloc now falls back to malloc on posix_memalign failure"
+            "cargo:warning=DB-1237: applying patch to port_posix.cc \
+             (cacheline_aligned_alloc: malloc fallback on posix_memalign failure)"
         );
-    } else if !content.contains("fall back to plain malloc") {
+        content.replace(old, new_code)
+    } else if already_patched {
+        // The file already has our patch text — but we still re-write it to
+        // guarantee a fresh mtime, which tells cmake's dependency tracker that
+        // port_posix.cc is newer than any cached port_posix.cc.o and must be
+        // recompiled.  Without this, a self-hosted runner with a persisted
+        // build directory would silently reuse the stale (possibly unpatched)
+        // object file even though the source is correct.
+        println!(
+            "cargo:warning=DB-1237: port_posix.cc already patched; \
+             re-writing to refresh mtime and force cmake recompile"
+        );
+        content
+    } else {
         // Neither the original nor our patch is present — unexpected file version.
         println!(
             "cargo:warning=DB-1237: WARNING: could not locate patch target in \
              port/port_posix.cc (len={}); patch not applied",
             content.len()
         );
-    }
+        return;
+    };
+
+    std::fs::write(&port_posix, &patched_content)
+        .expect("failed to write port/port_posix.cc");
+    println!("cargo:warning=DB-1237: wrote {:?}", port_posix);
 
     // --- 2. Invalidate the cmake build cache so cmake must recompile ---
     //
