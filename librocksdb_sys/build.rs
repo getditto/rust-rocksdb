@@ -79,6 +79,28 @@ fn main() {
         build.flag("-std=c++17");
         build.flag("-fno-rtti");
     }
+
+    // Match the NDEBUG state of librocksdb.a. cmake-rs picks
+    // CMAKE_BUILD_TYPE=Debug if OPT_LEVEL=0, and every other build type
+    // (Release, RelWithDebInfo, MinSizeRel) defines -DNDEBUG. The cc crate
+    // does NOT define NDEBUG by default, so without this check c.cc.o sees
+    // sizeof(port::Mutex) = 48 (the debug-only `locked_` field is present)
+    // while librocksdb.a sees 40. The 8-byte ODR shift moves
+    // CoreLocalArray::data_ from offset 96 to 104; recordTick reads from 96
+    // (the last 8 bytes of an unlocked mutex = 0), uses it as the data
+    // pointer, and SIGSEGVs at address 0x268.
+    //
+    // Latent on gcc 11; trips reliably on gcc 12+ via IPA-SRA partial
+    // cloning (Ubuntu 24.04's default gcc-13). Gate on OPT_LEVEL (not
+    // DEBUG) to stay aligned with cmake-rs even for custom cargo profiles
+    // like RelWithDebInfo (opt-level>0 + debug=true).
+    //
+    // Refs: getditto/ditto BIG-60, DB-1237.
+    if env::var("OPT_LEVEL").as_deref() != Ok("0") {
+        build.define("NDEBUG", None);
+        println!("cargo:warning=defined NDEBUG in c.cc to match librocksdb.a ABI");
+    }
+
     link_cpp(&mut build);
     build.warnings(false).compile("libcrocksdb.a");
 }
