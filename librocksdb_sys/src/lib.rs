@@ -227,6 +227,7 @@ extern "C" {
         value: c_uchar,
     );
     pub fn rocksdb_options_set_paranoid_checks(options: *mut rocksdb_options_t, value: c_uchar);
+    pub fn rocksdb_options_set_use_fsync(options: *mut rocksdb_options_t, value: c_int);
 
     pub fn rocksdb_readoptions_create() -> *mut rocksdb_readoptions_t;
     pub fn rocksdb_readoptions_destroy(options: *mut rocksdb_readoptions_t);
