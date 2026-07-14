@@ -162,6 +162,7 @@ using rocksdb::TableProperties;
 using rocksdb::TablePropertiesCollection;
 using rocksdb::TablePropertiesCollector;
 using rocksdb::TablePropertiesCollectorFactory;
+using ROCKSDB_NAMESPACE::Transaction;
 using rocksdb::UserCollectedProperties;
 using rocksdb::WALRecoveryMode;
 using rocksdb::WritableFile;
@@ -713,7 +714,7 @@ struct crocksdb_post_write_callback_t : public PostWriteCallback {
 // It lets the sys crate expose Transaction::PopSavePoint(), which RocksDB's
 // public C API omits.
 struct rocksdb_transaction_t {
-  rocksdb::Transaction* rep;
+  Transaction* rep;
 };
 
 crocksdb_post_write_callback_t* crocksdb_post_write_callback_init(
