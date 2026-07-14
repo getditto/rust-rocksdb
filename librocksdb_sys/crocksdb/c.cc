@@ -54,6 +54,7 @@
 #include "rocksdb/utilities/debug.h"
 #include "rocksdb/utilities/options_util.h"
 #include "rocksdb/utilities/table_properties_collectors.h"
+#include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "src/blob_format.h"
@@ -708,6 +709,13 @@ struct crocksdb_post_write_callback_t : public PostWriteCallback {
   }
 };
 
+// Keep this definition identical to RocksDB's private C wrapper in db/c.cc.
+// It lets the sys crate expose Transaction::PopSavePoint(), which RocksDB's
+// public C API omits.
+struct rocksdb_transaction_t {
+  rocksdb::Transaction* rep;
+};
+
 crocksdb_post_write_callback_t* crocksdb_post_write_callback_init(
     void* buf, size_t buf_len, void* state,
     on_post_write_callback_cb on_post_write_callback) {
@@ -734,6 +742,11 @@ static bool SaveError(char** errptr, const Status& s) {
     *errptr = strdup(s.ToString().c_str());
   }
   return true;
+}
+
+void crocksdb_transaction_pop_savepoint(rocksdb_transaction_t* transaction,
+                                        char** errptr) {
+  SaveError(errptr, transaction->rep->PopSavePoint());
 }
 
 static char* CopyString(const std::string& str) {

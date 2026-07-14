@@ -225,6 +225,13 @@ typedef struct crocksdb_encryption_key_manager_t
 typedef struct crocksdb_file_system_inspector_t
     crocksdb_file_system_inspector_t;
 
+/* Opaque type from RocksDB's transaction C API. */
+typedef struct rocksdb_transaction_t rocksdb_transaction_t;
+
+/* RocksDB's C API does not expose Transaction::PopSavePoint(). */
+extern C_ROCKSDB_LIBRARY_API void crocksdb_transaction_pop_savepoint(
+    rocksdb_transaction_t* transaction, char** errptr);
+
 /* DB operations */
 
 extern C_ROCKSDB_LIBRARY_API crocksdb_t* crocksdb_open(

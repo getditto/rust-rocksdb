@@ -194,6 +194,219 @@ pub struct DBWriteBatchIterator(c_void);
 #[repr(C)]
 pub struct DBFileSystemInspectorInstance(c_void);
 
+// Raw RocksDB C types used by OptimisticTransactionDB. These are kept
+// separate from the `crocksdb_*` wrappers above because the two APIs use
+// distinct handle representations.
+#[repr(C)]
+pub struct rocksdb_t(c_void);
+#[repr(C)]
+pub struct rocksdb_transaction_t(c_void);
+#[repr(C)]
+pub struct rocksdb_options_t(c_void);
+#[repr(C)]
+pub struct rocksdb_readoptions_t(c_void);
+#[repr(C)]
+pub struct rocksdb_writeoptions_t(c_void);
+#[repr(C)]
+pub struct rocksdb_column_family_handle_t(c_void);
+#[repr(C)]
+pub struct rocksdb_iterator_t(c_void);
+#[repr(C)]
+pub struct rocksdb_snapshot_t(c_void);
+#[repr(C)]
+pub struct rocksdb_optimistictransactiondb_t(c_void);
+#[repr(C)]
+pub struct rocksdb_optimistictransaction_options_t(c_void);
+
+extern "C" {
+    pub fn rocksdb_options_create() -> *mut rocksdb_options_t;
+    pub fn rocksdb_options_destroy(options: *mut rocksdb_options_t);
+    pub fn rocksdb_options_set_create_if_missing(options: *mut rocksdb_options_t, value: c_uchar);
+    pub fn rocksdb_options_set_create_missing_column_families(
+        options: *mut rocksdb_options_t,
+        value: c_uchar,
+    );
+    pub fn rocksdb_options_set_paranoid_checks(options: *mut rocksdb_options_t, value: c_uchar);
+
+    pub fn rocksdb_readoptions_create() -> *mut rocksdb_readoptions_t;
+    pub fn rocksdb_readoptions_destroy(options: *mut rocksdb_readoptions_t);
+    pub fn rocksdb_readoptions_set_verify_checksums(
+        options: *mut rocksdb_readoptions_t,
+        value: c_uchar,
+    );
+    pub fn rocksdb_readoptions_set_iterate_upper_bound(
+        options: *mut rocksdb_readoptions_t,
+        key: *const c_char,
+        key_length: size_t,
+    );
+    pub fn rocksdb_readoptions_set_snapshot(
+        options: *mut rocksdb_readoptions_t,
+        snapshot: *const rocksdb_snapshot_t,
+    );
+
+    pub fn rocksdb_writeoptions_create() -> *mut rocksdb_writeoptions_t;
+    pub fn rocksdb_writeoptions_destroy(options: *mut rocksdb_writeoptions_t);
+    pub fn rocksdb_writeoptions_set_sync(options: *mut rocksdb_writeoptions_t, value: c_uchar);
+
+    pub fn rocksdb_list_column_families(
+        options: *const rocksdb_options_t,
+        name: *const c_char,
+        length: *mut size_t,
+        error: *mut *mut c_char,
+    ) -> *mut *mut c_char;
+    pub fn rocksdb_list_column_families_destroy(list: *mut *mut c_char, length: size_t);
+    pub fn rocksdb_create_column_family(
+        db: *mut rocksdb_t,
+        options: *const rocksdb_options_t,
+        name: *const c_char,
+        error: *mut *mut c_char,
+    ) -> *mut rocksdb_column_family_handle_t;
+    pub fn rocksdb_drop_column_family(
+        db: *mut rocksdb_t,
+        handle: *mut rocksdb_column_family_handle_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_column_family_handle_destroy(handle: *mut rocksdb_column_family_handle_t);
+
+    pub fn rocksdb_optimistictransactiondb_open_column_families(
+        options: *const rocksdb_options_t,
+        name: *const c_char,
+        column_family_count: c_int,
+        column_family_names: *const *const c_char,
+        column_family_options: *const *const rocksdb_options_t,
+        column_family_handles: *mut *mut rocksdb_column_family_handle_t,
+        error: *mut *mut c_char,
+    ) -> *mut rocksdb_optimistictransactiondb_t;
+    pub fn rocksdb_optimistictransactiondb_close(db: *mut rocksdb_optimistictransactiondb_t);
+    pub fn rocksdb_optimistictransactiondb_get_base_db(
+        db: *mut rocksdb_optimistictransactiondb_t,
+    ) -> *mut rocksdb_t;
+    pub fn rocksdb_optimistictransactiondb_close_base_db(db: *mut rocksdb_t);
+
+    pub fn rocksdb_optimistictransaction_options_create(
+    ) -> *mut rocksdb_optimistictransaction_options_t;
+    pub fn rocksdb_optimistictransaction_options_destroy(
+        options: *mut rocksdb_optimistictransaction_options_t,
+    );
+    pub fn rocksdb_optimistictransaction_options_set_set_snapshot(
+        options: *mut rocksdb_optimistictransaction_options_t,
+        value: c_uchar,
+    );
+    pub fn rocksdb_optimistictransaction_begin(
+        db: *mut rocksdb_optimistictransactiondb_t,
+        write_options: *const rocksdb_writeoptions_t,
+        transaction_options: *const rocksdb_optimistictransaction_options_t,
+        old_transaction: *mut rocksdb_transaction_t,
+    ) -> *mut rocksdb_transaction_t;
+
+    pub fn rocksdb_transaction_commit(
+        transaction: *mut rocksdb_transaction_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_rollback(
+        transaction: *mut rocksdb_transaction_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_set_savepoint(transaction: *mut rocksdb_transaction_t);
+    pub fn rocksdb_transaction_rollback_to_savepoint(
+        transaction: *mut rocksdb_transaction_t,
+        error: *mut *mut c_char,
+    );
+    pub fn crocksdb_transaction_pop_savepoint(
+        transaction: *mut rocksdb_transaction_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_destroy(transaction: *mut rocksdb_transaction_t);
+    pub fn rocksdb_transaction_get_snapshot(
+        transaction: *mut rocksdb_transaction_t,
+    ) -> *const rocksdb_snapshot_t;
+
+    pub fn rocksdb_transaction_get_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        value_length: *mut size_t,
+        error: *mut *mut c_char,
+    ) -> *mut c_char;
+    pub fn rocksdb_transaction_get_for_update_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        value_length: *mut size_t,
+        exclusive: c_uchar,
+        error: *mut *mut c_char,
+    ) -> *mut c_char;
+    pub fn rocksdb_transaction_put_cf(
+        transaction: *mut rocksdb_transaction_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        value: *const c_char,
+        value_length: size_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_delete_cf(
+        transaction: *mut rocksdb_transaction_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_create_iterator_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+    ) -> *mut rocksdb_iterator_t;
+
+    pub fn rocksdb_iter_destroy(iterator: *mut rocksdb_iterator_t);
+    pub fn rocksdb_iter_valid(iterator: *const rocksdb_iterator_t) -> c_uchar;
+    pub fn rocksdb_iter_seek_to_first(iterator: *mut rocksdb_iterator_t);
+    pub fn rocksdb_iter_seek_to_last(iterator: *mut rocksdb_iterator_t);
+    pub fn rocksdb_iter_seek(
+        iterator: *mut rocksdb_iterator_t,
+        key: *const c_char,
+        key_length: size_t,
+    );
+    pub fn rocksdb_iter_seek_for_prev(
+        iterator: *mut rocksdb_iterator_t,
+        key: *const c_char,
+        key_length: size_t,
+    );
+    pub fn rocksdb_iter_next(iterator: *mut rocksdb_iterator_t);
+    pub fn rocksdb_iter_prev(iterator: *mut rocksdb_iterator_t);
+    pub fn rocksdb_iter_key(
+        iterator: *const rocksdb_iterator_t,
+        key_length: *mut size_t,
+    ) -> *const c_char;
+    pub fn rocksdb_iter_value(
+        iterator: *const rocksdb_iterator_t,
+        value_length: *mut size_t,
+    ) -> *const c_char;
+    pub fn rocksdb_iter_get_error(iterator: *const rocksdb_iterator_t, error: *mut *mut c_char);
+
+    pub fn rocksdb_put_cf(
+        db: *mut rocksdb_t,
+        options: *const rocksdb_writeoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        value: *const c_char,
+        value_length: size_t,
+        error: *mut *mut c_char,
+    );
+    pub fn rocksdb_property_value(db: *mut rocksdb_t, name: *const c_char) -> *mut c_char;
+    pub fn rocksdb_property_value_cf(
+        db: *mut rocksdb_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        name: *const c_char,
+    ) -> *mut c_char;
+    pub fn rocksdb_free(pointer: *mut c_void);
+}
+
 // @needs_manual_sync
 // This is repr(C) because we need to access C array of conditions.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
