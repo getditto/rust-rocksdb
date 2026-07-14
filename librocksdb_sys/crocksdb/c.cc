@@ -717,6 +717,11 @@ struct rocksdb_transaction_t {
   Transaction* rep;
 };
 
+// Keep this definition identical to RocksDB's private C wrapper in db/c.cc.
+struct rocksdb_column_family_handle_t {
+  ColumnFamilyHandle* rep;
+};
+
 crocksdb_post_write_callback_t* crocksdb_post_write_callback_init(
     void* buf, size_t buf_len, void* state,
     on_post_write_callback_cb on_post_write_callback) {
@@ -748,6 +753,34 @@ static bool SaveError(char** errptr, const Status& s) {
 void crocksdb_transaction_pop_savepoint(rocksdb_transaction_t* transaction,
                                         char** errptr) {
   SaveError(errptr, transaction->rep->PopSavePoint());
+}
+
+void crocksdb_transaction_apply_batch(
+    rocksdb_transaction_t* transaction,
+    rocksdb_column_family_handle_t* const* column_families,
+    const unsigned char* operations, const char* const* keys,
+    const size_t* key_lengths, const char* const* values,
+    const size_t* value_lengths, size_t count, char** errptr) {
+  for (size_t i = 0; i < count; ++i) {
+    Status status;
+    switch (operations[i]) {
+      case 0:
+        status = transaction->rep->Put(
+            column_families[i]->rep, Slice(keys[i], key_lengths[i]),
+            Slice(values[i], value_lengths[i]));
+        break;
+      case 1:
+        status = transaction->rep->Delete(column_families[i]->rep,
+                                          Slice(keys[i], key_lengths[i]));
+        break;
+      default:
+        status = Status::InvalidArgument("unknown transaction batch operation");
+        break;
+    }
+    if (SaveError(errptr, status)) {
+      return;
+    }
+  }
 }
 
 static char* CopyString(const std::string& str) {

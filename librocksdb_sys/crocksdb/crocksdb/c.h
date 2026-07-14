@@ -227,10 +227,20 @@ typedef struct crocksdb_file_system_inspector_t
 
 /* Opaque type from RocksDB's transaction C API. */
 typedef struct rocksdb_transaction_t rocksdb_transaction_t;
+typedef struct rocksdb_column_family_handle_t rocksdb_column_family_handle_t;
 
 /* RocksDB's C API does not expose Transaction::PopSavePoint(). */
 extern C_ROCKSDB_LIBRARY_API void crocksdb_transaction_pop_savepoint(
     rocksdb_transaction_t* transaction, char** errptr);
+
+/* Apply an array of put/delete operations to one transaction.
+ * Operation 0 is put and operation 1 is delete. */
+extern C_ROCKSDB_LIBRARY_API void crocksdb_transaction_apply_batch(
+    rocksdb_transaction_t* transaction,
+    rocksdb_column_family_handle_t* const* column_families,
+    const unsigned char* operations, const char* const* keys,
+    const size_t* key_lengths, const char* const* values,
+    const size_t* value_lengths, size_t count, char** errptr);
 
 /* DB operations */
 

@@ -316,6 +316,17 @@ extern "C" {
         transaction: *mut rocksdb_transaction_t,
         error: *mut *mut c_char,
     );
+    pub fn crocksdb_transaction_apply_batch(
+        transaction: *mut rocksdb_transaction_t,
+        column_families: *const *mut rocksdb_column_family_handle_t,
+        operations: *const c_uchar,
+        keys: *const *const c_char,
+        key_lengths: *const size_t,
+        values: *const *const c_char,
+        value_lengths: *const size_t,
+        count: size_t,
+        error: *mut *mut c_char,
+    );
     pub fn rocksdb_transaction_destroy(transaction: *mut rocksdb_transaction_t);
     pub fn rocksdb_transaction_get_snapshot(
         transaction: *mut rocksdb_transaction_t,
@@ -340,6 +351,28 @@ extern "C" {
         exclusive: c_uchar,
         error: *mut *mut c_char,
     ) -> *mut c_char;
+    pub fn rocksdb_transaction_multi_get_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_families: *const *const rocksdb_column_family_handle_t,
+        num_keys: size_t,
+        keys: *const *const c_char,
+        key_lengths: *const size_t,
+        values: *mut *mut c_char,
+        value_lengths: *mut size_t,
+        errors: *mut *mut c_char,
+    );
+    pub fn rocksdb_transaction_multi_get_for_update_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_families: *const *const rocksdb_column_family_handle_t,
+        num_keys: size_t,
+        keys: *const *const c_char,
+        key_lengths: *const size_t,
+        values: *mut *mut c_char,
+        value_lengths: *mut size_t,
+        errors: *mut *mut c_char,
+    );
     pub fn rocksdb_transaction_put_cf(
         transaction: *mut rocksdb_transaction_t,
         column_family: *mut rocksdb_column_family_handle_t,
