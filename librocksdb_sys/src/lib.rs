@@ -295,6 +295,10 @@ extern "C" {
         options: *mut rocksdb_optimistictransaction_options_t,
         value: c_uchar,
     );
+    pub fn rocksdb_optimistictransaction_options_set_write_batch_index_overwrite(
+        options: *mut rocksdb_optimistictransaction_options_t,
+        value: c_uchar,
+    );
     pub fn rocksdb_optimistictransaction_begin(
         db: *mut rocksdb_optimistictransactiondb_t,
         write_options: *const rocksdb_writeoptions_t,
