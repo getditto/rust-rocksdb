@@ -262,7 +262,7 @@ crocksdb_transaction_multi_get_cf_pinned(
     rocksdb_column_family_handle_t* column_family, size_t count,
     const char* const* keys, const size_t* key_lengths,
     const char** values, size_t* value_lengths, unsigned char* found,
-    char** errors);
+    char** errors, unsigned char track_for_update);
 
 extern C_ROCKSDB_LIBRARY_API void
 crocksdb_transaction_multiget_result_destroy(

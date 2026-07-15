@@ -816,7 +816,7 @@ crocksdb_transaction_multi_get_cf_pinned(
     rocksdb_column_family_handle_t* column_family, size_t count,
     const char* const* keys, const size_t* key_lengths,
     const char** values, size_t* value_lengths, unsigned char* found,
-    char** errors) {
+    char** errors, unsigned char track_for_update) {
   auto* result = new crocksdb_transaction_multiget_result_t(count);
   std::vector<Slice> slices;
   slices.reserve(count);
@@ -824,10 +824,25 @@ crocksdb_transaction_multi_get_cf_pinned(
     slices.emplace_back(keys[i], key_lengths[i]);
   }
 
+  std::vector<Status> tracking_statuses(count);
+  if (track_for_update) {
+    for (size_t i = 0; i < count; ++i) {
+      Status status = transaction->rep->GetForUpdate(
+          options->rep, column_family->rep, slices[i],
+          static_cast<std::string*>(nullptr));
+      if (!status.IsNotFound()) {
+        tracking_statuses[i] = status;
+      }
+    }
+  }
+
   transaction->rep->MultiGet(options->rep, column_family->rep, count,
                              slices.data(), result->values.data(),
                              result->statuses.data());
   for (size_t i = 0; i < count; ++i) {
+    if (!tracking_statuses[i].ok()) {
+      result->statuses[i] = tracking_statuses[i];
+    }
     const Status& status = result->statuses[i];
     found[i] = status.ok();
     errors[i] = nullptr;

@@ -349,6 +349,7 @@ extern "C" {
         value_lengths: *mut size_t,
         found: *mut c_uchar,
         errors: *mut *mut c_char,
+        track_for_update: c_uchar,
     ) -> *mut crocksdb_transaction_multiget_result_t;
     pub fn crocksdb_transaction_multiget_result_destroy(
         result: *mut crocksdb_transaction_multiget_result_t,
