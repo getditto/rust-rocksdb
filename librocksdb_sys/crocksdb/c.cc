@@ -801,10 +801,12 @@ void crocksdb_transaction_track_for_update_cf(
     const rocksdb_readoptions_t* options,
     rocksdb_column_family_handle_t* column_family, const char* key,
     size_t key_length, char** errptr) {
-  SaveError(errptr, transaction->rep->GetForUpdate(
-                        options->rep, column_family->rep,
-                        Slice(key, key_length),
-                        static_cast<std::string*>(nullptr)));
+  Status status = transaction->rep->GetForUpdate(
+      options->rep, column_family->rep, Slice(key, key_length),
+      static_cast<std::string*>(nullptr));
+  if (!status.IsNotFound()) {
+    SaveError(errptr, status);
+  }
 }
 
 crocksdb_transaction_multiget_result_t*
