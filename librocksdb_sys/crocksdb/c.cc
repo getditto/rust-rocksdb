@@ -786,6 +786,15 @@ void crocksdb_transaction_apply_batch(
         status = transaction->rep->Delete(column_families[i]->rep,
                                           Slice(keys[i], key_lengths[i]));
         break;
+      case 2:
+        status = transaction->rep->PutUntracked(
+            column_families[i]->rep, Slice(keys[i], key_lengths[i]),
+            Slice(values[i], value_lengths[i]));
+        break;
+      case 3:
+        status = transaction->rep->DeleteUntracked(
+            column_families[i]->rep, Slice(keys[i], key_lengths[i]));
+        break;
       default:
         status = Status::InvalidArgument("unknown transaction batch operation");
         break;
