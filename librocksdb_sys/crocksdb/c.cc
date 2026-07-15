@@ -722,6 +722,19 @@ struct rocksdb_column_family_handle_t {
   ColumnFamilyHandle* rep;
 };
 
+// Keep this definition identical to RocksDB's private C wrapper in db/c.cc.
+struct rocksdb_readoptions_t {
+  ReadOptions rep;
+};
+
+struct crocksdb_transaction_multiget_result_t {
+  explicit crocksdb_transaction_multiget_result_t(size_t count)
+      : values(count), statuses(count) {}
+
+  std::vector<PinnableSlice> values;
+  std::vector<Status> statuses;
+};
+
 crocksdb_post_write_callback_t* crocksdb_post_write_callback_init(
     void* buf, size_t buf_len, void* state,
     on_post_write_callback_cb on_post_write_callback) {
@@ -781,6 +794,58 @@ void crocksdb_transaction_apply_batch(
       return;
     }
   }
+}
+
+void crocksdb_transaction_track_for_update_cf(
+    rocksdb_transaction_t* transaction,
+    const rocksdb_readoptions_t* options,
+    rocksdb_column_family_handle_t* column_family, const char* key,
+    size_t key_length, char** errptr) {
+  SaveError(errptr, transaction->rep->GetForUpdate(
+                        options->rep, column_family->rep,
+                        Slice(key, key_length),
+                        static_cast<std::string*>(nullptr)));
+}
+
+crocksdb_transaction_multiget_result_t*
+crocksdb_transaction_multi_get_cf_pinned(
+    rocksdb_transaction_t* transaction,
+    const rocksdb_readoptions_t* options,
+    rocksdb_column_family_handle_t* column_family, size_t count,
+    const char* const* keys, const size_t* key_lengths,
+    const char** values, size_t* value_lengths, unsigned char* found,
+    char** errors) {
+  auto* result = new crocksdb_transaction_multiget_result_t(count);
+  std::vector<Slice> slices;
+  slices.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    slices.emplace_back(keys[i], key_lengths[i]);
+  }
+
+  transaction->rep->MultiGet(options->rep, column_family->rep, count,
+                             slices.data(), result->values.data(),
+                             result->statuses.data());
+  for (size_t i = 0; i < count; ++i) {
+    const Status& status = result->statuses[i];
+    found[i] = status.ok();
+    errors[i] = nullptr;
+    if (status.ok()) {
+      values[i] = result->values[i].data();
+      value_lengths[i] = result->values[i].size();
+    } else {
+      values[i] = nullptr;
+      value_lengths[i] = 0;
+      if (!status.IsNotFound()) {
+        errors[i] = strdup(status.ToString().c_str());
+      }
+    }
+  }
+  return result;
+}
+
+void crocksdb_transaction_multiget_result_destroy(
+    crocksdb_transaction_multiget_result_t* result) {
+  delete result;
 }
 
 static char* CopyString(const std::string& str) {

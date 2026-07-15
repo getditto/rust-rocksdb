@@ -202,6 +202,8 @@ pub struct rocksdb_t(c_void);
 #[repr(C)]
 pub struct rocksdb_transaction_t(c_void);
 #[repr(C)]
+pub struct crocksdb_transaction_multiget_result_t(c_void);
+#[repr(C)]
 pub struct rocksdb_options_t(c_void);
 #[repr(C)]
 pub struct rocksdb_readoptions_t(c_void);
@@ -327,6 +329,29 @@ extern "C" {
         value_lengths: *const size_t,
         count: size_t,
         error: *mut *mut c_char,
+    );
+    pub fn crocksdb_transaction_track_for_update_cf(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        key: *const c_char,
+        key_length: size_t,
+        error: *mut *mut c_char,
+    );
+    pub fn crocksdb_transaction_multi_get_cf_pinned(
+        transaction: *mut rocksdb_transaction_t,
+        options: *const rocksdb_readoptions_t,
+        column_family: *mut rocksdb_column_family_handle_t,
+        count: size_t,
+        keys: *const *const c_char,
+        key_lengths: *const size_t,
+        values: *mut *const c_char,
+        value_lengths: *mut size_t,
+        found: *mut c_uchar,
+        errors: *mut *mut c_char,
+    ) -> *mut crocksdb_transaction_multiget_result_t;
+    pub fn crocksdb_transaction_multiget_result_destroy(
+        result: *mut crocksdb_transaction_multiget_result_t,
     );
     pub fn rocksdb_transaction_destroy(transaction: *mut rocksdb_transaction_t);
     pub fn rocksdb_transaction_get_snapshot(

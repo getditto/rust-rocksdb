@@ -228,6 +228,9 @@ typedef struct crocksdb_file_system_inspector_t
 /* Opaque type from RocksDB's transaction C API. */
 typedef struct rocksdb_transaction_t rocksdb_transaction_t;
 typedef struct rocksdb_column_family_handle_t rocksdb_column_family_handle_t;
+typedef struct rocksdb_readoptions_t rocksdb_readoptions_t;
+typedef struct crocksdb_transaction_multiget_result_t
+    crocksdb_transaction_multiget_result_t;
 
 /* RocksDB's C API does not expose Transaction::PopSavePoint(). */
 extern C_ROCKSDB_LIBRARY_API void crocksdb_transaction_pop_savepoint(
@@ -241,6 +244,29 @@ extern C_ROCKSDB_LIBRARY_API void crocksdb_transaction_apply_batch(
     const unsigned char* operations, const char* const* keys,
     const size_t* key_lengths, const char* const* values,
     const size_t* value_lengths, size_t count, char** errptr);
+
+/* Register a key in the transaction conflict set without materializing its value. */
+extern C_ROCKSDB_LIBRARY_API void
+crocksdb_transaction_track_for_update_cf(
+    rocksdb_transaction_t* transaction,
+    const rocksdb_readoptions_t* options,
+    rocksdb_column_family_handle_t* column_family, const char* key,
+    size_t key_length, char** errptr);
+
+/* Read many keys from one column family through Transaction::MultiGet's
+ * PinnableSlice overload. Value pointers remain valid until result is destroyed. */
+extern C_ROCKSDB_LIBRARY_API crocksdb_transaction_multiget_result_t*
+crocksdb_transaction_multi_get_cf_pinned(
+    rocksdb_transaction_t* transaction,
+    const rocksdb_readoptions_t* options,
+    rocksdb_column_family_handle_t* column_family, size_t count,
+    const char* const* keys, const size_t* key_lengths,
+    const char** values, size_t* value_lengths, unsigned char* found,
+    char** errors);
+
+extern C_ROCKSDB_LIBRARY_API void
+crocksdb_transaction_multiget_result_destroy(
+    crocksdb_transaction_multiget_result_t* result);
 
 /* DB operations */
 
